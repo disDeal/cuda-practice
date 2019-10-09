@@ -1,66 +1,42 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
 
-#define N 10000000
-#define MAX_ERR 1e-6
-
-__global__ void vector_add(float *out, float *a, float *b, int n) {
-    int index = threadIdx.x;
-    int stride = blockDim.x;
-
-    for(int i = index; i < n; i += stride){
-        out[i] = a[i] + b[i];
-    }
+__global__
+void saxpy(int n, float a, float *x, float *y)
+{
+  int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i < n) y[i] = a*x[i] + y[i];
 }
 
-int main(){
-    float *a, *b, *out;
-    float *d_a, *d_b, *d_out; 
+int main(void)
+{
+  int N = 1<<20;
+  float *x, *y, *d_x, *d_y;
+  x = (float*)malloc(N*sizeof(float));
+  y = (float*)malloc(N*sizeof(float));
 
-    // Allocate host memory
-    a   = (float*)malloc(sizeof(float) * N);
-    b   = (float*)malloc(sizeof(float) * N);
-    out = (float*)malloc(sizeof(float) * N);
+  cudaMalloc(&d_x, N*sizeof(float)); 
+  cudaMalloc(&d_y, N*sizeof(float));
 
-    // Initialize host arrays
-    for(int i = 0; i < N; i++){
-        a[i] = 1.0f;
-        b[i] = 2.0f;
-    }
+  for (int i = 0; i < N; i++) {
+    x[i] = 1.0f;
+    y[i] = 2.0f;
+  }
 
-    // Allocate device memory 
-    cudaMalloc((void**)&d_a, sizeof(float) * N);
-    cudaMalloc((void**)&d_b, sizeof(float) * N);
-    cudaMalloc((void**)&d_out, sizeof(float) * N);
+  cudaMemcpy(d_x, x, N*sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_y, y, N*sizeof(float), cudaMemcpyHostToDevice);
 
-    // Transfer data from host to device memory
-    cudaMemcpy(d_a, a, sizeof(float) * N, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, b, sizeof(float) * N, cudaMemcpyHostToDevice);
+  // Perform SAXPY on 1M elements
+  saxpy<<<(N+255)/256, 256>>>(N, 2.0f, d_x, d_y);
 
-    // Executing kernel 
-    vector_add<<<1,256>>>(d_out, d_a, d_b, N);
-    
-    // Transfer data back to host memory
-    cudaMemcpy(out, d_out, sizeof(float) * N, cudaMemcpyDeviceToHost);
+  cudaMemcpy(y, d_y, N*sizeof(float), cudaMemcpyDeviceToHost);
 
-    // Verification
-    for(int i = 0; i < N; i++){
-        assert(fabs(out[i] - a[i] - b[i]) < MAX_ERR);
-    }
+  float maxError = 0.0f;
+  for (int i = 0; i < N; i++)
+    maxError = max(maxError, abs(y[i]-4.0f));
+  printf("Max error: %f\n", maxError);
 
-    printf("PASSED\n");
-
-    // Deallocate device memory
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_out);
-
-    // Deallocate host memory
-    free(a); 
-    free(b); 
-    free(out);
+  cudaFree(d_x);
+  cudaFree(d_y);
+  free(x);
+  free(y);
 }
